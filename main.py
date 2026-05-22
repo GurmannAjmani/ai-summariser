@@ -2,6 +2,8 @@
 
 import os
 import sys
+import json
+import urllib.request
 
 import fitz
 from dotenv import load_dotenv
@@ -52,6 +54,12 @@ QA_SYSTEM = """You are a helpful study assistant.
 Answer the user's question based strictly on the provided document text. 
 Be clear, concise, and accurate."""
 
+DIAGRAM_SYSTEM = """You create helpful Mermaid.js diagrams to summarize study material.
+Generate exactly 3 diagrams (like flowcharts, mindmaps, or graphs) based on the text.
+Output ONLY the raw Mermaid code for each diagram, separated by this exact line:
+=== DIAGRAM ===
+CRITICAL: Do NOT output any explanations, titles, or markdown code blocks (```). Start directly with the graph type (e.g. 'graph TD'). Use valid Mermaid syntax only."""
+
 
 def read_pdf(path: str) -> str:
     doc = fitz.open(path)
@@ -94,6 +102,36 @@ def generate_revision(client: Groq, text: str) -> str:
 def generate_flashcards(client: Groq, text: str) -> str:
     user = f"Create {FLASHCARD_COUNT} flashcards from this text.\n\n{text}"
     return ask_groq(client, FLASHCARD_SYSTEM, user, "Generating flashcards")
+
+
+def generate_diagrams(client: Groq, text: str) -> list[str]:
+    user = f"Create 3 Mermaid diagrams summarizing this text.\n\n{text}"
+    raw = ask_groq(client, DIAGRAM_SYSTEM, user, "Generating diagrams")
+    # Clean up and split the raw text by the delimiter
+    return [d.strip() for d in raw.split("=== DIAGRAM ===") if d.strip()]
+
+
+def render_mermaid_to_png(mermaid_code: str) -> bytes | None:
+    import base64
+    
+    # Clean up any residual markdown or explanations
+    mermaid_code = mermaid_code.replace("```mermaid", "").replace("```", "").strip()
+    
+    # mermaid.ink requires base64 encoding
+    encoded_str = base64.b64encode(mermaid_code.encode("utf-8")).decode("utf-8")
+    url = f"https://mermaid.ink/img/{encoded_str}"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AI-Summariser/1.0"
+    }
+    
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req) as response:
+            return response.read()
+    except Exception as e:
+        tqdm.write(f"Error rendering diagram via mermaid.ink: {e}\nCode was:\n{mermaid_code}")
+        return None
 
 
 def split_mcq_output(raw: str) -> tuple[str, str]:
@@ -142,6 +180,30 @@ def main() -> None:
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
         tqdm.write(f"Saved {path}")
+
+    diagram_codes = generate_diagrams(client, text)
+    diagram_pdf_path = os.path.join(OUT_DIR, f"{base}_diagrams.pdf")
+    pdf_doc = fitz.open()
+    
+    for i, code in enumerate(tqdm(diagram_codes, desc="Rendering diagrams", unit="diagram")):
+        # Sometimes LLMs still wrap in markdown block, so we clean it
+        code = code.replace("```mermaid", "").replace("```", "").strip()
+        png_data = render_mermaid_to_png(code)
+        if png_data:
+            try:
+                img_doc = fitz.open(stream=png_data, filetype="png")
+                pdf_bytes = img_doc.convert_to_pdf()
+                img_pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+                pdf_doc.insert_pdf(img_pdf)
+                img_doc.close()
+                img_pdf.close()
+            except Exception as e:
+                tqdm.write(f"Error inserting diagram {i+1} into PDF: {e}")
+    
+    if pdf_doc.page_count > 0:
+        pdf_doc.save(diagram_pdf_path)
+        tqdm.write(f"Saved {diagram_pdf_path}")
+    pdf_doc.close()
 
     print("\n" + "="*40)
     print("Interactive Q&A Session")
