@@ -48,6 +48,10 @@ Output a list of front/back pairs. Format each flashcard as:
 Q: [Question or Concept]
 A: [Answer or Definition]"""
 
+QA_SYSTEM = """You are a helpful study assistant. 
+Answer the user's question based strictly on the provided document text. 
+Be clear, concise, and accurate."""
+
 
 def read_pdf(path: str) -> str:
     doc = fitz.open(path)
@@ -138,6 +142,28 @@ def main() -> None:
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
         tqdm.write(f"Saved {path}")
+
+    print("\n" + "="*40)
+    print("Interactive Q&A Session")
+    print("Type your question about the document below, or type 'quit' to exit.")
+    print("="*40)
+    
+    while True:
+        try:
+            q = input("\nQuestion: ").strip()
+            if q.lower() in ["quit", "exit", "q"]:
+                print("Exiting Q&A. Goodbye!")
+                break
+            if not q:
+                continue
+                
+            user_prompt = f"Based on the following text, answer the question.\n\nQuestion: {q}\n\nText:\n{text}"
+            answer = ask_groq(client, QA_SYSTEM, user_prompt, "Fetching answer")
+            print(f"\nAnswer:\n{answer}")
+            
+        except (KeyboardInterrupt, EOFError):
+            print("\nExiting Q&A. Goodbye!")
+            break
 
 
 if __name__ == "__main__":
