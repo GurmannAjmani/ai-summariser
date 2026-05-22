@@ -1,4 +1,4 @@
-"""Read a PDF with PyMuPDF, generate MCQs with Groq, write two .txt files."""
+"""Read a PDF with PyMuPDF, generate study files with Groq."""
 
 import os
 import sys
@@ -13,14 +13,16 @@ load_dotenv()
 # --- edit these ---
 PDF_PATH = "NPTEL CLOUD.pdf"
 MCQ_COUNT = 10
+FLASHCARD_COUNT = 10
 MODEL = "llama-3.3-70b-versatile"
 OUT_DIR = "output"
 TEMPERATURE = 0.4
+MAX_TEXT_CHARS = 120_000
 # ------------------
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
-SYSTEM_PROMPT = """You create multiple-choice questions from study material.
+MCQ_SYSTEM = """You create multiple-choice questions from study material.
 Output exactly two sections with these headers on their own lines:
 
 === MCQS ===
@@ -28,6 +30,23 @@ Output exactly two sections with these headers on their own lines:
 
 === ANSWER KEY ===
 (numbered lines like: 1. B) brief explanation)"""
+
+SUMMARY_SYSTEM = """You summarize academic or technical documents clearly and accurately.
+Write a structured summary: main topic, key sections, and takeaways.
+Use short paragraphs and bullet points where helpful. No MCQs."""
+
+REVISION_SYSTEM = """You create revision notes from study material for exam prep.
+Include:
+- Important points (bullets)
+- Key terms with definitions
+- Brief explanations of core concepts
+
+Use clear headings. Be concise but complete enough to revise from later. No MCQs."""
+
+FLASHCARD_SYSTEM = """You create flashcards from study material.
+Output a list of front/back pairs. Format each flashcard as:
+Q: [Question or Concept]
+A: [Answer or Definition]"""
 
 
 def read_pdf(path: str) -> str:
@@ -39,28 +58,41 @@ def read_pdf(path: str) -> str:
     return "\n".join(pages).strip()
 
 
-def generate_mcqs(text: str) -> str:
-    if not GROQ_API_KEY:
-        sys.exit("Set GROQ_API_KEY in your .env file.")
-
-    client = Groq(api_key=GROQ_API_KEY)
-    user = f"Create {MCQ_COUNT} multiple-choice questions from this text.\n\n{text[:120_000]}"
-
-    with tqdm(total=1, desc="Generating MCQs (Groq)", bar_format="{l_bar}{bar}| {elapsed}") as bar:
+def ask_groq(client: Groq, system: str, user: str, desc: str) -> str:
+    with tqdm(total=1, desc=desc, bar_format="{l_bar}{bar}| {elapsed}") as bar:
         response = client.chat.completions.create(
             model=MODEL,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
             temperature=TEMPERATURE,
         )
         bar.update(1)
-
     return response.choices[0].message.content or ""
 
 
-def split_output(raw: str) -> tuple[str, str]:
+def generate_mcqs(client: Groq, text: str) -> str:
+    user = f"Create {MCQ_COUNT} multiple-choice questions from this text.\n\n{text}"
+    return ask_groq(client, MCQ_SYSTEM, user, "Generating MCQs")
+
+
+def generate_summary(client: Groq, text: str) -> str:
+    user = f"Summarize this document.\n\n{text}"
+    return ask_groq(client, SUMMARY_SYSTEM, user, "Generating summary")
+
+
+def generate_revision(client: Groq, text: str) -> str:
+    user = f"Create revision notes from this text.\n\n{text}"
+    return ask_groq(client, REVISION_SYSTEM, user, "Generating revision notes")
+
+
+def generate_flashcards(client: Groq, text: str) -> str:
+    user = f"Create {FLASHCARD_COUNT} flashcards from this text.\n\n{text}"
+    return ask_groq(client, FLASHCARD_SYSTEM, user, "Generating flashcards")
+
+
+def split_mcq_output(raw: str) -> tuple[str, str]:
     marker_mcqs = "=== MCQS ==="
     marker_answers = "=== ANSWER KEY ==="
 
@@ -73,6 +105,8 @@ def split_output(raw: str) -> tuple[str, str]:
 
 
 def main() -> None:
+    if not GROQ_API_KEY:
+        sys.exit("Set GROQ_API_KEY in your .env file.")
     if not os.path.isfile(PDF_PATH):
         sys.exit(f"PDF not found: {PDF_PATH}")
 
@@ -80,22 +114,27 @@ def main() -> None:
     if not text:
         sys.exit("No text found in PDF.")
 
-    raw = generate_mcqs(text)
-    mcqs, answers = split_output(raw)
-
-    os.makedirs(OUT_DIR, exist_ok=True)
+    text = text[:MAX_TEXT_CHARS]
+    client = Groq(api_key=GROQ_API_KEY)
     base = os.path.splitext(os.path.basename(PDF_PATH))[0]
-    paths = [
-        os.path.join(OUT_DIR, f"{base}_mcqs.txt"),
-        os.path.join(OUT_DIR, f"{base}_answer_key.txt"),
+    os.makedirs(OUT_DIR, exist_ok=True)
+
+    raw_mcqs = generate_mcqs(client, text)
+    mcqs, answers = split_mcq_output(raw_mcqs)
+    summary = generate_summary(client, text)
+    revision = generate_revision(client, text)
+    flashcards = generate_flashcards(client, text)
+
+    outputs = [
+        (f"{base}_mcqs.txt", mcqs),
+        (f"{base}_answer_key.txt", answers),
+        (f"{base}_summary.txt", summary),
+        (f"{base}_revision.txt", revision),
+        (f"{base}_flashcard.txt", flashcards),
     ]
 
-    for path, content in tqdm(
-        zip(paths, [mcqs, answers]),
-        total=2,
-        desc="Writing files",
-        unit="file",
-    ):
+    for name, content in tqdm(outputs, desc="Writing files", unit="file"):
+        path = os.path.join(OUT_DIR, name)
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
         tqdm.write(f"Saved {path}")

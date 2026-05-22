@@ -1,9 +1,11 @@
 # PDF → MCQ generator
 
-Reads a PDF with PyMuPDF, sends the text to Groq, and writes two files:
+Reads a PDF with PyMuPDF and uses Groq to write four files in `output/`:
 
-- `output/<name>_mcqs.txt` — questions
-- `output/<name>_answer_key.txt` — answers
+- `<name>_mcqs.txt` — questions
+- `<name>_answer_key.txt` — answers
+- `<name>_summary.txt` — document summary
+- `<name>_revision.txt` — key points, definitions, and brief concept explanations for revision
 
 ## Setup
 
