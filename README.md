@@ -8,7 +8,7 @@ Built for Problem Statement 1: **AI Study Assistant for Exam Preparation**.
 
 ## Demo
 
-Watch it in action here: [https://youtu.be/1u7I4lTwHAM](https://youtu.be/1u7I4lTwHAM)
+Watch it in action here: [https://youtu.be/zBzwfrhvOs8](https://youtu.be/zBzwfrhvOs8)
 
 ---
 
